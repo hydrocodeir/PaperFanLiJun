@@ -457,6 +457,7 @@ def plot_paper_style_fig3_network(
     boundary_path: Optional[Path] = None,
     interpolation_method: str = "thin_plate_spline",
     interpolation_smooth: float = 0.35,
+    target_quantile: float = 0.90,
 ) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(9.0, 8.4))
     meta = station_metadata[["station_id", "station_name", "latitude", "longitude"]].copy()
@@ -471,8 +472,13 @@ def plot_paper_style_fig3_network(
         df_all["station_id"] = df_all["station_id"].astype(str)
 
     last_cf = None
+    target_q = round(float(target_quantile), 2)
     for ax, series in zip(axes.flat, SERIES_ORDER):
-        df = df_all[(df_all["series"] == series) & (df_all["model_type"] == "quantile") & (df_all["quantile"].round(2) == 0.90)].copy()
+        df = df_all[
+            (df_all["series"] == series)
+            & (df_all["model_type"] == "quantile")
+            & (df_all["quantile"].round(2) == target_q)
+        ].copy()
         merged = df.merge(meta, on="station_id", how="left", suffixes=("", "_meta"))
         merged["station_name"] = merged["station_name_meta"].fillna(merged["station_name"])
         merged = merged.dropna(subset=["longitude", "latitude"])
