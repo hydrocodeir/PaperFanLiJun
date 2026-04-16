@@ -12,6 +12,8 @@ import pandas as pd
 import geopandas as gpd
 from scipy.interpolate import Rbf, griddata
 from shapely import contains_xy
+from shapely.geometry import Point
+from shapely.ops import polygonize, unary_union as shp_unary_union
 
 SERIES_ORDER = ["warm_days", "cool_days", "warm_nights", "cool_nights"]
 SERIES_PANEL_LABELS = {
@@ -53,7 +55,15 @@ def _load_boundary_geometry(boundary_path: Optional[Path]):
     if gdf.empty:
         return None
     gdf = gdf.to_crs(4326)
-    return gdf.geometry.union_all() if hasattr(gdf.geometry, "union_all") else gdf.unary_union
+    geom = gdf.geometry.union_all() if hasattr(gdf.geometry, "union_all") else gdf.unary_union
+
+    # Some boundary files are stored as line work (LineString/MultiLineString)
+    # instead of Polygon geometries. Convert them to polygons for clipping.
+    if geom.geom_type in {"LineString", "MultiLineString"}:
+        polys = list(polygonize(geom))
+        if polys:
+            geom = shp_unary_union(polys)
+    return geom
 
 
 def _get_plot_extent(meta: pd.DataFrame, boundary_geom=None, pad_deg: float = 0.4):
@@ -89,7 +99,11 @@ def _interpolate_quantile_surface(merged: pd.DataFrame, grid_x, grid_y, method: 
         rbf = Rbf(x, y, z, function="multiquadric", smooth=smooth)
         return rbf(grid_x, grid_y)
     if method in {"linear", "cubic", "nearest"}:
-        return griddata(np.column_stack([x, y]), z, (grid_x, grid_y), method=method)
+        surface = griddata(np.column_stack([x, y]), z, (grid_x, grid_y), method=method)
+        if method != "nearest" and np.isnan(surface).any():
+            nearest = griddata(np.column_stack([x, y]), z, (grid_x, grid_y), method="nearest")
+            surface = np.where(np.isnan(surface), nearest, surface)
+        return surface
 
     rbf = Rbf(x, y, z, function="thin_plate", smooth=smooth)
     return rbf(grid_x, grid_y)
@@ -98,7 +112,14 @@ def _interpolate_quantile_surface(merged: pd.DataFrame, grid_x, grid_y, method: 
 def _mask_surface_to_boundary(grid_x, grid_y, surface, boundary_geom=None):
     if boundary_geom is None:
         return surface
-    mask = contains_xy(boundary_geom, grid_x, grid_y)
+    try:
+        mask = contains_xy(boundary_geom, grid_x.ravel(), grid_y.ravel()).reshape(grid_x.shape)
+    except Exception:
+        mask = np.zeros_like(grid_x, dtype=bool)
+    if not np.any(mask):
+        # Fallback for geometry engines that fail on vectorized contains_xy.
+        pts = [Point(float(x), float(y)) for x, y in zip(grid_x.ravel(), grid_y.ravel())]
+        mask = np.array([boundary_geom.covers(pt) for pt in pts], dtype=bool).reshape(grid_x.shape)
     return np.where(mask, surface, np.nan)
 
 
@@ -436,10 +457,14 @@ def plot_paper_style_fig3_network(
     boundary_path: Optional[Path] = None,
     interpolation_method: str = "thin_plate_spline",
     interpolation_smooth: float = 0.35,
+    target_quantile: float = 0.90,
 ) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(9.0, 8.4))
     meta = station_metadata[["station_id", "station_name", "latitude", "longitude"]].copy()
     meta["station_id"] = meta["station_id"].astype(str)
+    if boundary_path is None:
+        default_boundary = Path("data/raw/Iran.geojson")
+        boundary_path = default_boundary if default_boundary.exists() else None
     boundary_geom = _load_boundary_geometry(boundary_path)
 
     df_all = station_trends.copy()
@@ -447,8 +472,13 @@ def plot_paper_style_fig3_network(
         df_all["station_id"] = df_all["station_id"].astype(str)
 
     last_cf = None
+    target_q = round(float(target_quantile), 2)
     for ax, series in zip(axes.flat, SERIES_ORDER):
-        df = df_all[(df_all["series"] == series) & (df_all["model_type"] == "quantile") & (df_all["quantile"].round(2) == 0.90)].copy()
+        df = df_all[
+            (df_all["series"] == series)
+            & (df_all["model_type"] == "quantile")
+            & (df_all["quantile"].round(2) == target_q)
+        ].copy()
         merged = df.merge(meta, on="station_id", how="left", suffixes=("", "_meta"))
         merged["station_name"] = merged["station_name_meta"].fillna(merged["station_name"])
         merged = merged.dropna(subset=["longitude", "latitude"])
