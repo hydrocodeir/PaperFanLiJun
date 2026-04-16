@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
@@ -39,6 +39,7 @@ FIG3_CMAP = LinearSegmentedColormap.from_list(
     N=256,
 )
 FIG3_NORM = BoundaryNorm(FIG3_LEVELS, FIG3_CMAP.N, clip=False)
+PUB_DPI = 600
 
 
 def _series_label(series: str) -> str:
@@ -136,6 +137,22 @@ def _draw_boundary(ax, boundary_geom, linewidth: float = 1.0):
                 ax.plot(xi, yi, color="black", linewidth=max(0.35, linewidth * 0.4), zorder=4)
         except Exception:
             continue
+
+
+def _format_geo_axis(ax, show_x: bool, show_y: bool) -> None:
+    xticks = np.arange(45, 64, 2.5)
+    yticks = np.arange(26, 41, 2.0)
+    ax.set_xticks(xticks)
+    ax.set_yticks(yticks)
+    if show_x:
+        ax.set_xticklabels([f"{x:.1f}°E" for x in xticks], fontsize=8)
+    else:
+        ax.set_xticklabels([])
+    if show_y:
+        ax.set_yticklabels([f"{y:.0f}°N" for y in yticks], fontsize=8)
+    else:
+        ax.set_yticklabels([])
+    ax.tick_params(direction="out", length=3.5, width=0.8)
 
 
 def _plot_spatial_trend_panel(
@@ -459,7 +476,8 @@ def plot_paper_style_fig3_network(
     interpolation_smooth: float = 0.35,
     target_quantile: float = 0.90,
 ) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(9.0, 8.4))
+    fig, axes = plt.subplots(2, 2, figsize=(9.2, 8.6), constrained_layout=False)
+    fig.patch.set_facecolor("white")
     meta = station_metadata[["station_id", "station_name", "latitude", "longitude"]].copy()
     meta["station_id"] = meta["station_id"].astype(str)
     if boundary_path is None:
@@ -491,21 +509,44 @@ def plot_paper_style_fig3_network(
             interpolation_smooth=interpolation_smooth,
             levels=FIG3_LEVELS,
         )
-        ax.tick_params(labelsize=8)
+        row_idx, col_idx = divmod(SERIES_ORDER.index(series), 2)
+        _format_geo_axis(ax, show_x=(row_idx == 1), show_y=(col_idx == 0))
+        ax.set_facecolor("#f4f4f4")
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.9)
 
-    for ax in axes[0, :]:
-        ax.set_xticklabels([])
-    for ax in axes[:, 1]:
-        ax.set_yticklabels([])
-
-    fig.suptitle(suptitle, fontsize=13, y=0.97)
-    cax = fig.add_axes([0.14, 0.06, 0.72, 0.03])
+    fig.suptitle(suptitle, fontsize=14, y=0.975, fontweight="semibold")
+    cax = fig.add_axes([0.14, 0.055, 0.72, 0.028])
     cbar = fig.colorbar(last_cf, cax=cax, orientation="horizontal", ticks=FIG3_LEVELS)
-    cbar.set_label("Trend (days per decade)", fontsize=10)
-    fig.subplots_adjust(left=0.06, right=0.96, top=0.92, bottom=0.12, wspace=0.06, hspace=0.12)
+    cbar.set_label("Trend (days per decade)", fontsize=12, fontweight="medium")
+    cbar.ax.tick_params(labelsize=9)
+    fig.subplots_adjust(left=0.07, right=0.97, top=0.92, bottom=0.12, wspace=0.06, hspace=0.12)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_paper_style_fig345_network_suite(
+    station_trends: pd.DataFrame,
+    station_metadata: pd.DataFrame,
+    output_dir: Path,
+    boundary_path: Optional[Path] = None,
+    interpolation_method: str = "thin_plate_spline",
+    interpolation_smooth: float = 0.35,
+    quantiles: Sequence[Tuple[int, float]] = ((3, 0.90), (4, 0.50), (5, 0.10)),
+) -> None:
+    output_dir = Path(output_dir)
+    for fig_num, q in quantiles:
+        plot_paper_style_fig3_network(
+            station_trends=station_trends,
+            station_metadata=station_metadata,
+            output_path=output_dir / f"paper_fig{int(fig_num)}_network.png",
+            suptitle=f"Figure {int(fig_num)} adaptation: q={float(q):.2f} station trends for the network",
+            boundary_path=boundary_path,
+            interpolation_method=interpolation_method,
+            interpolation_smooth=interpolation_smooth,
+            target_quantile=float(q),
+        )
 
 
 def plot_paper_style_fig3_station_focus(station_trends: pd.DataFrame, station_metadata: pd.DataFrame, focal_station_id: str, focal_station_name: str, output_path: Path) -> None:
