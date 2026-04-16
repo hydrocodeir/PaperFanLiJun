@@ -12,6 +12,7 @@ import pandas as pd
 import geopandas as gpd
 from scipy.interpolate import Rbf, griddata
 from shapely import contains_xy
+from shapely.geometry import Point
 
 SERIES_ORDER = ["warm_days", "cool_days", "warm_nights", "cool_nights"]
 SERIES_PANEL_LABELS = {
@@ -105,11 +106,11 @@ def _mask_surface_to_boundary(grid_x, grid_y, surface, boundary_geom=None):
     try:
         mask = contains_xy(boundary_geom, grid_x.ravel(), grid_y.ravel()).reshape(grid_x.shape)
     except Exception:
-        mask = contains_xy(boundary_geom, grid_x, grid_y)
+        mask = np.zeros_like(grid_x, dtype=bool)
     if not np.any(mask):
-        # Defensive fallback: if mask creation fails silently (all-False),
-        # keep the interpolated field so the map does not degrade to points only.
-        return surface
+        # Fallback for geometry engines that fail on vectorized contains_xy.
+        pts = [Point(float(x), float(y)) for x, y in zip(grid_x.ravel(), grid_y.ravel())]
+        mask = np.array([boundary_geom.covers(pt) for pt in pts], dtype=bool).reshape(grid_x.shape)
     return np.where(mask, surface, np.nan)
 
 
@@ -451,6 +452,9 @@ def plot_paper_style_fig3_network(
     fig, axes = plt.subplots(2, 2, figsize=(9.0, 8.4))
     meta = station_metadata[["station_id", "station_name", "latitude", "longitude"]].copy()
     meta["station_id"] = meta["station_id"].astype(str)
+    if boundary_path is None:
+        default_boundary = Path("data/raw/Iran.geojson")
+        boundary_path = default_boundary if default_boundary.exists() else None
     boundary_geom = _load_boundary_geometry(boundary_path)
 
     df_all = station_trends.copy()
