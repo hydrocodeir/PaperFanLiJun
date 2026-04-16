@@ -13,6 +13,7 @@ import geopandas as gpd
 from scipy.interpolate import Rbf, griddata
 from shapely import contains_xy
 from shapely.geometry import Point
+from shapely.ops import polygonize, unary_union as shp_unary_union
 
 SERIES_ORDER = ["warm_days", "cool_days", "warm_nights", "cool_nights"]
 SERIES_PANEL_LABELS = {
@@ -54,7 +55,15 @@ def _load_boundary_geometry(boundary_path: Optional[Path]):
     if gdf.empty:
         return None
     gdf = gdf.to_crs(4326)
-    return gdf.geometry.union_all() if hasattr(gdf.geometry, "union_all") else gdf.unary_union
+    geom = gdf.geometry.union_all() if hasattr(gdf.geometry, "union_all") else gdf.unary_union
+
+    # Some boundary files are stored as line work (LineString/MultiLineString)
+    # instead of Polygon geometries. Convert them to polygons for clipping.
+    if geom.geom_type in {"LineString", "MultiLineString"}:
+        polys = list(polygonize(geom))
+        if polys:
+            geom = shp_unary_union(polys)
+    return geom
 
 
 def _get_plot_extent(meta: pd.DataFrame, boundary_geom=None, pad_deg: float = 0.4):
