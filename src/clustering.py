@@ -11,8 +11,12 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 
+from plot_theme import apply_publication_defaults, save_figure
+
 INDEX_COLUMNS = ["warm_days", "cool_days", "warm_nights", "cool_nights"]
 ANNUAL_CLIMATE_COLUMNS = ["tmean_annual", "tmax_annual", "tmin_annual"]
+
+apply_publication_defaults()
 
 
 def load_station_metadata(config: Dict) -> pd.DataFrame:
@@ -182,39 +186,39 @@ def plot_ward_dendrogram(features: pd.DataFrame, output_path: Path) -> None:
     ax.set_xlabel("Station")
     ax.set_ylabel("Linkage distance")
     fig.tight_layout()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300)
-    plt.close(fig)
+    save_figure(fig, output_path)
 
 
 def plot_silhouette_curve(metrics_df: pd.DataFrame, output_path: Path) -> None:
     if metrics_df.empty:
         return
     fig, ax1 = plt.subplots(figsize=(8, 5))
-    ax1.plot(metrics_df["k"], metrics_df["within_cluster_ss"], marker="o")
+    ax1.plot(metrics_df["k"], metrics_df["within_cluster_ss"], marker="o", color="#1f4e79", label="Within-cluster SS")
     ax1.set_xlabel("Number of clusters")
     ax1.set_ylabel("Within-cluster SS")
 
     ax2 = ax1.twinx()
-    ax2.plot(metrics_df["k"], metrics_df["silhouette"], marker="s", linestyle="--")
+    ax2.plot(metrics_df["k"], metrics_df["silhouette"], marker="s", linestyle="--", color="#c44e52", label="Silhouette")
     ax2.set_ylabel("Silhouette score")
 
     ax1.set_title("Ward cluster optimization")
+    ax1.grid(True, axis="y")
     fig.tight_layout()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300)
-    plt.close(fig)
+    save_figure(fig, output_path)
 
 
 def plot_cluster_feature_space(station_clusters: pd.DataFrame, output_path: Path) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
     ax = axes[0]
-    sc1 = ax.scatter(
+    ax.scatter(
         station_clusters["mean_temp"],
         station_clusters["mean_dtr"],
         c=station_clusters["cluster"],
         s=110,
+        cmap="viridis",
+        edgecolors="black",
+        linewidths=0.35,
     )
     for _, row in station_clusters.iterrows():
         ax.text(row["mean_temp"] + 0.03, row["mean_dtr"] + 0.03, str(row["station_name"]), fontsize=8)
@@ -228,6 +232,9 @@ def plot_cluster_feature_space(station_clusters: pd.DataFrame, output_path: Path
         station_clusters["mean_temp"],
         c=station_clusters["cluster"],
         s=110,
+        cmap="viridis",
+        edgecolors="black",
+        linewidths=0.35,
     )
     for _, row in station_clusters.iterrows():
         ax.text(row["elevation"] + 5, row["mean_temp"] + 0.03, str(row["station_name"]), fontsize=8)
@@ -235,8 +242,7 @@ def plot_cluster_feature_space(station_clusters: pd.DataFrame, output_path: Path
     ax.set_ylabel("Mean annual temperature (C)")
     ax.set_title("Elevation-temperature space")
 
-    fig.colorbar(sc2, ax=axes.ravel().tolist(), shrink=0.85, label="Cluster")
+    cbar = fig.colorbar(sc2, ax=axes.ravel().tolist(), shrink=0.85, label="Cluster")
+    cbar.ax.tick_params(labelsize=9)
     fig.tight_layout()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300)
-    plt.close(fig)
+    save_figure(fig, output_path)

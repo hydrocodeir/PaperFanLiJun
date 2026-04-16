@@ -15,6 +15,8 @@ from shapely import contains_xy
 from shapely.geometry import Point
 from shapely.ops import polygonize, unary_union as shp_unary_union
 
+from plot_theme import PUB_DPI, apply_publication_defaults, save_figure
+
 SERIES_ORDER = ["warm_days", "cool_days", "warm_nights", "cool_nights"]
 SERIES_PANEL_LABELS = {
     "warm_days": "(a) Warm days",
@@ -39,7 +41,8 @@ FIG3_CMAP = LinearSegmentedColormap.from_list(
     N=256,
 )
 FIG3_NORM = BoundaryNorm(FIG3_LEVELS, FIG3_CMAP.N, clip=False)
-PUB_DPI = 600
+
+apply_publication_defaults()
 
 
 def _series_label(series: str) -> str:
@@ -224,8 +227,40 @@ def _apply_group_filter(df: pd.DataFrame, group_filter: Optional[Dict[str, objec
 
 
 def _trend_subset(trends_df: pd.DataFrame, series: str, group_filter: Optional[Dict[str, object]] = None) -> pd.DataFrame:
+    if trends_df is None or trends_df.empty or "series" not in trends_df.columns:
+        return pd.DataFrame()
     out = _apply_group_filter(trends_df, group_filter)
     return out.loc[out["series"] == series].copy()
+
+
+def _prepare_station_series_map_data(
+    station_trends: pd.DataFrame,
+    station_metadata: pd.DataFrame,
+    series: str,
+    target_quantile: float,
+) -> pd.DataFrame:
+    required = {"series", "model_type", "quantile", "station_id"}
+    if station_trends is None or station_trends.empty or not required.issubset(station_trends.columns):
+        return pd.DataFrame()
+
+    df = station_trends.copy()
+    if "station_id" in df.columns:
+        df["station_id"] = df["station_id"].astype(str)
+
+    q = round(float(target_quantile), 2)
+    df = df[
+        (df["series"] == series)
+        & (df["model_type"] == "quantile")
+        & (df["quantile"].round(2) == q)
+    ].copy()
+    if df.empty:
+        return df
+
+    meta = station_metadata[["station_id", "station_name", "latitude", "longitude"]].copy()
+    meta["station_id"] = meta["station_id"].astype(str)
+    merged = df.merge(meta, on="station_id", how="left", suffixes=("", "_meta"))
+    merged["station_name"] = merged["station_name_meta"].fillna(merged["station_name"])
+    return merged.dropna(subset=["longitude", "latitude"]).copy()
 
 
 def _plot_timeseries_panel(ax, data_df: pd.DataFrame, trends_df: pd.DataFrame, series: str, group_filter=None) -> None:
@@ -237,6 +272,13 @@ def _plot_timeseries_panel(ax, data_df: pd.DataFrame, trends_df: pd.DataFrame, s
 
     ax.plot(plot_df["year"], plot_df[series], marker="o", linewidth=1.3, markersize=2.5)
     subset = _trend_subset(trends_df, series, group_filter)
+    required = {"model_type", "quantile"}
+    if subset.empty or not required.issubset(subset.columns):
+        ax.set_title(SERIES_PANEL_LABELS.get(series, _series_label(series)), fontsize=11)
+        ax.set_xlabel("Year")
+        ax.set_ylabel("Days/year")
+        ax.grid(True, alpha=0.25)
+        return
     subset = subset[
         ((subset["model_type"] == "quantile") & (subset["quantile"].round(2).isin([0.10, 0.50, 0.90])))
         | (subset["model_type"] == "ols_mean")
@@ -270,7 +312,7 @@ def _plot_timeseries_panel(ax, data_df: pd.DataFrame, trends_df: pd.DataFrame, s
         ax.text(
             0.03,
             0.97,
-            "".join(text_lines),
+            "\n".join(text_lines),
             transform=ax.transAxes,
             va="top",
             ha="left",
@@ -281,6 +323,10 @@ def _plot_timeseries_panel(ax, data_df: pd.DataFrame, trends_df: pd.DataFrame, s
 
 def _plot_quantile_profile_panel(ax, trends_df: pd.DataFrame, series: str, group_filter=None) -> None:
     subset = _trend_subset(trends_df, series, group_filter)
+    required = {"model_type", "quantile", "slope_per_decade", "ci_low_per_decade", "ci_high_per_decade"}
+    if subset.empty or not required.issubset(subset.columns):
+        ax.set_axis_off()
+        return
     q = subset.loc[subset["model_type"] == "quantile"].sort_values("quantile").copy()
     ols = subset.loc[subset["model_type"] == "ols_mean"].copy()
     if q.empty or ols.empty:
@@ -352,11 +398,14 @@ def plot_network_timeseries_with_trends(network_df: pd.DataFrame, trends_df: pd.
     fig, ax = plt.subplots(figsize=(9, 5.5))
     ax.plot(plot_df["year"], plot_df[series], marker="o", linewidth=1.5, label="Observed")
 
-    subset = trends_df[
-        (trends_df["series"] == series)
-        & (((trends_df["model_type"] == "quantile") & (trends_df["quantile"].round(2).isin([0.10, 0.50, 0.90])))
-           | (trends_df["model_type"] == "ols_mean"))
-    ].copy()
+    subset = pd.DataFrame()
+    required = {"series", "model_type", "quantile"}
+    if trends_df is not None and not trends_df.empty and required.issubset(trends_df.columns):
+        subset = trends_df[
+            (trends_df["series"] == series)
+            & (((trends_df["model_type"] == "quantile") & (trends_df["quantile"].round(2).isin([0.10, 0.50, 0.90])))
+               | (trends_df["model_type"] == "ols_mean"))
+        ].copy()
     for _, row in subset.iterrows():
         yhat = row["intercept_centered"] + row["slope_per_year"] * (plot_df["year"] - row["year_mean"])
         if row["model_type"] == "ols_mean":
@@ -374,12 +423,14 @@ def plot_network_timeseries_with_trends(network_df: pd.DataFrame, trends_df: pd.
     ax.set_ylabel("Days per year")
     ax.grid(True, alpha=0.3)
     ax.legend(frameon=False)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path)
 
 
 def plot_quantile_slope_profile(trends_df: pd.DataFrame, series: str, output_path: Path) -> None:
+    required = {"series", "model_type", "quantile"}
+    if trends_df is None or trends_df.empty or not required.issubset(trends_df.columns):
+        return
+
     q = trends_df[(trends_df["series"] == series) & (trends_df["model_type"] == "quantile")].copy()
     ols = trends_df[(trends_df["series"] == series) & (trends_df["model_type"] == "ols_mean")].copy()
     if q.empty or ols.empty:
@@ -400,28 +451,16 @@ def plot_quantile_slope_profile(trends_df: pd.DataFrame, series: str, output_pat
     ax.set_title(f"Quantile slope profile: {_series_label(series)}")
     ax.grid(True, alpha=0.3)
     ax.legend(frameon=False)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path)
 
 
 def plot_station_quantile_map(station_trends: pd.DataFrame, station_metadata: pd.DataFrame, series: str, output_path: Path) -> None:
-    df = station_trends.copy()
-    if "station_id" in df.columns:
-        df["station_id"] = df["station_id"].astype(str)
-    df = df[
-        (df["series"] == series)
-        & (df["model_type"] == "quantile")
-        & (df["quantile"].round(2) == 0.90)
-    ].copy()
-    if df.empty:
-        return
-
-    meta = station_metadata[["station_id", "station_name", "latitude", "longitude"]].copy()
-    meta["station_id"] = meta["station_id"].astype(str)
-    merged = df.merge(meta, on="station_id", how="left", suffixes=("", "_meta"))
-    merged["station_name"] = merged["station_name_meta"].fillna(merged["station_name"])
-    merged = merged.dropna(subset=["longitude", "latitude"])
+    merged = _prepare_station_series_map_data(
+        station_trends=station_trends,
+        station_metadata=station_metadata,
+        series=series,
+        target_quantile=0.90,
+    )
     if merged.empty:
         return
 
@@ -439,9 +478,7 @@ def plot_station_quantile_map(station_trends: pd.DataFrame, station_metadata: pd
     ax.grid(True, alpha=0.3)
     if not sig.empty:
         ax.legend(frameon=False)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path)
 
 
 def plot_paper_style_fig1(data_df: pd.DataFrame, trends_df: pd.DataFrame, output_path: Path, suptitle: str, group_filter=None) -> None:
@@ -450,9 +487,7 @@ def plot_paper_style_fig1(data_df: pd.DataFrame, trends_df: pd.DataFrame, output
         _plot_timeseries_panel(ax, data_df, trends_df, series, group_filter=group_filter)
     fig.suptitle(suptitle, fontsize=14, y=0.98)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path)
 
 
 def plot_paper_style_fig2(trends_df: pd.DataFrame, output_path: Path, suptitle: str, group_filter=None) -> None:
@@ -461,9 +496,7 @@ def plot_paper_style_fig2(trends_df: pd.DataFrame, output_path: Path, suptitle: 
         _plot_quantile_profile_panel(ax, trends_df, series, group_filter=group_filter)
     fig.suptitle(suptitle, fontsize=14, y=0.98)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path)
 
 
 def plot_paper_style_fig3_network(
@@ -478,28 +511,20 @@ def plot_paper_style_fig3_network(
 ) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(9.2, 8.6), constrained_layout=False)
     fig.patch.set_facecolor("white")
-    meta = station_metadata[["station_id", "station_name", "latitude", "longitude"]].copy()
-    meta["station_id"] = meta["station_id"].astype(str)
     if boundary_path is None:
         default_boundary = Path("data/raw/Iran.geojson")
         boundary_path = default_boundary if default_boundary.exists() else None
     boundary_geom = _load_boundary_geometry(boundary_path)
 
-    df_all = station_trends.copy()
-    if "station_id" in df_all.columns:
-        df_all["station_id"] = df_all["station_id"].astype(str)
-
     last_cf = None
     target_q = round(float(target_quantile), 2)
     for ax, series in zip(axes.flat, SERIES_ORDER):
-        df = df_all[
-            (df_all["series"] == series)
-            & (df_all["model_type"] == "quantile")
-            & (df_all["quantile"].round(2) == target_q)
-        ].copy()
-        merged = df.merge(meta, on="station_id", how="left", suffixes=("", "_meta"))
-        merged["station_name"] = merged["station_name_meta"].fillna(merged["station_name"])
-        merged = merged.dropna(subset=["longitude", "latitude"])
+        merged = _prepare_station_series_map_data(
+            station_trends=station_trends,
+            station_metadata=station_metadata,
+            series=series,
+            target_quantile=target_q,
+        )
         last_cf = _plot_spatial_trend_panel(
             ax,
             merged,
@@ -521,9 +546,7 @@ def plot_paper_style_fig3_network(
     cbar.set_label("Trend (days per decade)", fontsize=12, fontweight="medium")
     cbar.ax.tick_params(labelsize=9)
     fig.subplots_adjust(left=0.07, right=0.97, top=0.92, bottom=0.12, wspace=0.06, hspace=0.12)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path, dpi=PUB_DPI)
 
 
 def plot_paper_style_fig345_network_suite(
@@ -552,22 +575,14 @@ def plot_paper_style_fig345_network_suite(
 def plot_paper_style_fig3_station_focus(station_trends: pd.DataFrame, station_metadata: pd.DataFrame, focal_station_id: str, focal_station_name: str, output_path: Path) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
     color_target = None
-    meta = station_metadata[["station_id", "station_name", "latitude", "longitude"]].copy()
-    meta["station_id"] = meta["station_id"].astype(str)
-
-    df_all = station_trends.copy()
-    if "station_id" in df_all.columns:
-        df_all["station_id"] = df_all["station_id"].astype(str)
 
     for ax, series in zip(axes.flat, SERIES_ORDER):
-        df = df_all[
-            (df_all["series"] == series)
-            & (df_all["model_type"] == "quantile")
-            & (df_all["quantile"].round(2) == 0.90)
-        ].copy()
-        merged = df.merge(meta, on="station_id", how="left", suffixes=("", "_meta"))
-        merged["station_name"] = merged["station_name_meta"].fillna(merged["station_name"])
-        merged = merged.dropna(subset=["longitude", "latitude"])
+        merged = _prepare_station_series_map_data(
+            station_trends=station_trends,
+            station_metadata=station_metadata,
+            series=series,
+            target_quantile=0.90,
+        )
         _plot_map_panel(ax, merged, SERIES_PANEL_LABELS.get(series, _series_label(series)), focal_station_ids=[str(focal_station_id)])
         if hasattr(ax, "_climate_colorbar_target"):
             color_target = ax._climate_colorbar_target
@@ -575,31 +590,21 @@ def plot_paper_style_fig3_station_focus(station_trends: pd.DataFrame, station_me
         fig.colorbar(color_target, ax=axes.ravel().tolist(), shrink=0.88, label="Trend (days/decade)")
     fig.suptitle(f"Figure 3 adaptation for station: {focal_station_name} ({focal_station_id})", fontsize=14, y=0.98)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path)
 
 
 def plot_paper_style_fig3_cluster_focus(station_trends: pd.DataFrame, station_metadata: pd.DataFrame, station_clusters: pd.DataFrame, focal_cluster: int, output_path: Path) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
     color_target = None
     focus_ids = station_clusters.loc[station_clusters["cluster"] == int(focal_cluster), "station_id"].astype(str).tolist()
-    meta = station_metadata[["station_id", "station_name", "latitude", "longitude"]].copy()
-    meta["station_id"] = meta["station_id"].astype(str)
-
-    df_all = station_trends.copy()
-    if "station_id" in df_all.columns:
-        df_all["station_id"] = df_all["station_id"].astype(str)
 
     for ax, series in zip(axes.flat, SERIES_ORDER):
-        df = df_all[
-            (df_all["series"] == series)
-            & (df_all["model_type"] == "quantile")
-            & (df_all["quantile"].round(2) == 0.90)
-        ].copy()
-        merged = df.merge(meta, on="station_id", how="left", suffixes=("", "_meta"))
-        merged["station_name"] = merged["station_name_meta"].fillna(merged["station_name"])
-        merged = merged.dropna(subset=["longitude", "latitude"])
+        merged = _prepare_station_series_map_data(
+            station_trends=station_trends,
+            station_metadata=station_metadata,
+            series=series,
+            target_quantile=0.90,
+        )
         _plot_map_panel(ax, merged, SERIES_PANEL_LABELS.get(series, _series_label(series)), focal_station_ids=focus_ids)
         if hasattr(ax, "_climate_colorbar_target"):
             color_target = ax._climate_colorbar_target
@@ -607,9 +612,7 @@ def plot_paper_style_fig3_cluster_focus(station_trends: pd.DataFrame, station_me
         fig.colorbar(color_target, ax=axes.ravel().tolist(), shrink=0.88, label="Trend (days/decade)")
     fig.suptitle(f"Figure 3 adaptation for cluster {int(focal_cluster)}", fontsize=14, y=0.98)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path)
 
 
 def plot_cluster_membership_map(station_clusters: pd.DataFrame, output_path: Path) -> None:
@@ -623,6 +626,4 @@ def plot_cluster_membership_map(station_clusters: pd.DataFrame, output_path: Pat
     ax.set_ylabel("Latitude")
     ax.set_title("Station clusters from Ward hierarchical clustering")
     ax.grid(True, alpha=0.3)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    save_figure(fig, output_path)
