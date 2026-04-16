@@ -1,5 +1,6 @@
 from __future__ import annotations
-
+import matplotlib
+matplotlib.use("Agg")
 import json
 from pathlib import Path
 import re
@@ -49,6 +50,7 @@ from visualization import (
     plot_quantile_slope_profile,
     plot_station_quantile_map,
 )
+
 
 
 def load_config() -> dict:
@@ -194,6 +196,8 @@ def main() -> None:
         station_metadata,
         PROJECT_ROOT / "outputs/figures/paper_fig3_network.png",
         suptitle="Figure 3 adaptation: q=0.90 station trends for the 6-station network",
+        boundary_path=PROJECT_ROOT / config["spatial_visualization"]["iran_boundary_geojson"],
+        interpolation_method=config["spatial_visualization"].get("interpolation_method", "thin_plate_spline"),
     )
 
     for row in station_catalog.itertuples(index=False):

@@ -213,6 +213,7 @@ data/processed/*
 !data/processed
 !data/raw/dataSample.csv
 !data/raw/stationsInfoSample.csv
+!data/raw/Iran.geojson
 !data/processed/.keep
 
 outputs/*

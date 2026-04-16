@@ -6,6 +6,9 @@ from typing import Dict, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import geopandas as gpd
+from scipy.interpolate import Rbf, griddata
+from shapely import contains_xy
 
 SERIES_ORDER = ["warm_days", "cool_days", "warm_nights", "cool_nights"]
 SERIES_PANEL_LABELS = {
@@ -18,6 +21,118 @@ SERIES_PANEL_LABELS = {
 
 def _series_label(series: str) -> str:
     return series.replace("_", " ").title()
+
+
+def _load_boundary_geometry(boundary_path: Optional[Path]):
+    if boundary_path is None:
+        return None
+    path = Path(boundary_path)
+    if not path.exists():
+        return None
+    gdf = gpd.read_file(path)
+    if gdf.empty:
+        return None
+    geom = gdf.to_crs(4326).geometry.union_all() if hasattr(gdf, "to_crs") else gdf.geometry.union_all()
+    return geom
+
+
+def _get_plot_extent(meta: pd.DataFrame, boundary_geom=None, pad_deg: float = 1.0):
+    if boundary_geom is not None:
+        minx, miny, maxx, maxy = boundary_geom.bounds
+    else:
+        minx = float(meta["longitude"].min())
+        maxx = float(meta["longitude"].max())
+        miny = float(meta["latitude"].min())
+        maxy = float(meta["latitude"].max())
+    return (minx - pad_deg, maxx + pad_deg, miny - pad_deg, maxy + pad_deg)
+
+
+def _build_interpolation_grid(merged: pd.DataFrame, boundary_geom=None, nx: int = 220, ny: int = 180, pad_deg: float = 1.0):
+    xmin, xmax, ymin, ymax = _get_plot_extent(merged, boundary_geom=boundary_geom, pad_deg=pad_deg)
+    grid_x, grid_y = np.meshgrid(np.linspace(xmin, xmax, nx), np.linspace(ymin, ymax, ny))
+    return grid_x, grid_y
+
+
+def _interpolate_quantile_surface(merged: pd.DataFrame, grid_x, grid_y, method: str = "thin_plate_spline"):
+    x = merged["longitude"].to_numpy(dtype=float)
+    y = merged["latitude"].to_numpy(dtype=float)
+    z = merged["slope_per_decade"].to_numpy(dtype=float)
+    method = (method or "thin_plate_spline").lower()
+
+    if len(merged) < 4:
+        return np.full_like(grid_x, np.nan, dtype=float)
+
+    if method in {"thin_plate_spline", "rbf", "spline", "rbf_thin_plate"}:
+        rbf = Rbf(x, y, z, function="thin_plate", smooth=0.0)
+        return rbf(grid_x, grid_y)
+    if method in {"multiquadric", "rbf_multiquadric"}:
+        rbf = Rbf(x, y, z, function="multiquadric", smooth=0.0)
+        return rbf(grid_x, grid_y)
+    if method in {"linear", "cubic", "nearest"}:
+        return griddata(np.column_stack([x, y]), z, (grid_x, grid_y), method=method)
+
+    rbf = Rbf(x, y, z, function="thin_plate", smooth=0.0)
+    return rbf(grid_x, grid_y)
+
+
+def _mask_surface_to_boundary(grid_x, grid_y, surface, boundary_geom=None):
+    if boundary_geom is None:
+        return surface
+    mask = contains_xy(boundary_geom, grid_x, grid_y)
+    return np.where(mask, surface, np.nan)
+
+
+def _draw_boundary(ax, boundary_geom):
+    if boundary_geom is None:
+        return
+    geos = getattr(boundary_geom, "geoms", [boundary_geom])
+    for geom in geos:
+        try:
+            x, y = geom.exterior.xy
+            ax.plot(x, y, color="black", linewidth=0.8, zorder=3)
+            for ring in geom.interiors:
+                xi, yi = ring.xy
+                ax.plot(xi, yi, color="black", linewidth=0.4, zorder=3)
+        except Exception:
+            continue
+
+
+def _plot_spatial_trend_panel(ax, merged: pd.DataFrame, title: str, boundary_geom=None, interpolation_method: str = "thin_plate_spline"):
+    if merged.empty:
+        ax.set_axis_off()
+        return None
+
+    grid_x, grid_y = _build_interpolation_grid(merged, boundary_geom=boundary_geom)
+    surface = _interpolate_quantile_surface(merged, grid_x, grid_y, method=interpolation_method)
+    surface = _mask_surface_to_boundary(grid_x, grid_y, surface, boundary_geom=boundary_geom)
+
+    finite = np.isfinite(surface)
+    if finite.any():
+        vmin = float(np.nanmin(surface))
+        vmax = float(np.nanmax(surface))
+        if np.isclose(vmin, vmax):
+            vmax = vmin + 1e-6
+        levels = np.linspace(vmin, vmax, 14)
+        cf = ax.contourf(grid_x, grid_y, surface, levels=levels, cmap="coolwarm", extend="both", zorder=1)
+    else:
+        cf = None
+
+    _draw_boundary(ax, boundary_geom)
+
+    ax.scatter(merged["longitude"], merged["latitude"], s=22, facecolors="none", edgecolors="black", linewidths=0.5, zorder=4)
+    sig = merged.loc[merged["significant_95"].fillna(False)]
+    if not sig.empty:
+        ax.scatter(sig["longitude"], sig["latitude"], s=20, c="grey", edgecolors="black", linewidths=0.2, zorder=5)
+
+    xmin, xmax, ymin, ymax = _get_plot_extent(merged, boundary_geom=boundary_geom, pad_deg=0.4)
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title(title, fontsize=11)
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.grid(False)
+    return cf
 
 
 def _apply_group_filter(df: pd.DataFrame, group_filter: Optional[Dict[str, object]] = None) -> pd.DataFrame:
@@ -275,28 +390,37 @@ def plot_paper_style_fig2(trends_df: pd.DataFrame, output_path: Path, suptitle: 
     plt.close(fig)
 
 
-def plot_paper_style_fig3_network(station_trends: pd.DataFrame, station_metadata: pd.DataFrame, output_path: Path, suptitle="Figure 3 adaptation: q=0.90 station trends") -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+def plot_paper_style_fig3_network(
+    station_trends: pd.DataFrame,
+    station_metadata: pd.DataFrame,
+    output_path: Path,
+    suptitle="Figure 3 adaptation: q=0.90 station trends",
+    boundary_path: Optional[Path] = None,
+    interpolation_method: str = "thin_plate_spline",
+) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(12.5, 10))
     color_target = None
     meta = station_metadata[["station_id", "station_name", "latitude", "longitude"]].copy()
     meta["station_id"] = meta["station_id"].astype(str)
+    boundary_geom = _load_boundary_geometry(boundary_path)
 
     df_all = station_trends.copy()
     if "station_id" in df_all.columns:
         df_all["station_id"] = df_all["station_id"].astype(str)
 
     for ax, series in zip(axes.flat, SERIES_ORDER):
-        df = df_all[
-            (df_all["series"] == series)
-            & (df_all["model_type"] == "quantile")
-            & (df_all["quantile"].round(2) == 0.90)
-        ].copy()
+        df = df_all[(df_all["series"] == series) & (df_all["model_type"] == "quantile") & (df_all["quantile"].round(2) == 0.90)].copy()
         merged = df.merge(meta, on="station_id", how="left", suffixes=("", "_meta"))
         merged["station_name"] = merged["station_name_meta"].fillna(merged["station_name"])
         merged = merged.dropna(subset=["longitude", "latitude"])
-        _plot_map_panel(ax, merged, SERIES_PANEL_LABELS.get(series, _series_label(series)))
-        if hasattr(ax, "_climate_colorbar_target"):
-            color_target = ax._climate_colorbar_target
+        color_target = _plot_spatial_trend_panel(
+            ax,
+            merged,
+            SERIES_PANEL_LABELS.get(series, _series_label(series)),
+            boundary_geom=boundary_geom,
+            interpolation_method=interpolation_method,
+        ) or color_target
+
     if color_target is not None:
         fig.colorbar(color_target, ax=axes.ravel().tolist(), shrink=0.88, label="Trend (days/decade)")
     fig.suptitle(suptitle, fontsize=14, y=0.98)
