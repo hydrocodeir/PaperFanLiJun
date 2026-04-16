@@ -37,6 +37,10 @@ def create_method_summary() -> pd.DataFrame:
 
 
 def compare_selected_quantiles(trends: pd.DataFrame, selected_quantiles: List[float]) -> pd.DataFrame:
+    required_cols = {"model_type", "quantile"}
+    if trends is None or trends.empty or not required_cols.issubset(trends.columns):
+        return pd.DataFrame(columns=list(trends.columns) + ["quantile_label"] if isinstance(trends, pd.DataFrame) else ["quantile_label"])
+
     selected = trends[
         (trends["model_type"] == "quantile") & (trends["quantile"].round(2).isin([round(q, 2) for q in selected_quantiles]))
     ].copy()
@@ -51,6 +55,10 @@ def compare_selected_quantiles(trends: pd.DataFrame, selected_quantiles: List[fl
 
 
 def build_station_significance_summary(trends: pd.DataFrame, target_quantile: float = 0.90) -> pd.DataFrame:
+    required_cols = {"model_type", "quantile"}
+    if trends is None or trends.empty or not required_cols.issubset(trends.columns):
+        return pd.DataFrame(columns=["series", "cluster", "station_id", "station_name", "cluster_id", "slope_per_decade", "significant_95"])
+
     q = trends[
         (trends["model_type"] == "quantile") &
         (trends["quantile"].round(2) == round(target_quantile, 2))

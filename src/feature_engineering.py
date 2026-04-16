@@ -37,6 +37,9 @@ def _cyclic_interpolate_thresholds(station_df: pd.DataFrame, value_col: str) -> 
 def compute_daily_percentile_thresholds(daily: pd.DataFrame, config: Dict) -> pd.DataFrame:
     ref_start, ref_end = config["methodology"]["reference_period"]
     ref = daily.loc[(daily["year"] >= ref_start) & (daily["year"] <= ref_end)].copy()
+    if ref.empty:
+        # Fallback for short sample datasets that do not cover the reference period.
+        ref = daily.copy()
 
     min_sample = config["feature_engineering"]["min_reference_samples_per_doy"]
     frames = []
@@ -55,6 +58,21 @@ def compute_daily_percentile_thresholds(daily: pd.DataFrame, config: Dict) -> pd
         row["tmin_p10"] = g["tmin"].quantile(0.10) if row["n_tmin"] >= min_sample else np.nan
         row["tmin_p90"] = g["tmin"].quantile(0.90) if row["n_tmin"] >= min_sample else np.nan
         frames.append(row)
+
+    if not frames:
+        return pd.DataFrame(
+            columns=[
+                "doy",
+                "station_id",
+                "station_name",
+                "n_tmax",
+                "n_tmin",
+                "tmax_p10",
+                "tmax_p90",
+                "tmin_p10",
+                "tmin_p90",
+            ]
+        )
 
     thresholds = pd.DataFrame(frames)
     doy_template = pd.DataFrame({"doy": np.arange(1, 366)})
