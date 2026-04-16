@@ -89,7 +89,11 @@ def _interpolate_quantile_surface(merged: pd.DataFrame, grid_x, grid_y, method: 
         rbf = Rbf(x, y, z, function="multiquadric", smooth=smooth)
         return rbf(grid_x, grid_y)
     if method in {"linear", "cubic", "nearest"}:
-        return griddata(np.column_stack([x, y]), z, (grid_x, grid_y), method=method)
+        surface = griddata(np.column_stack([x, y]), z, (grid_x, grid_y), method=method)
+        if method != "nearest" and np.isnan(surface).any():
+            nearest = griddata(np.column_stack([x, y]), z, (grid_x, grid_y), method="nearest")
+            surface = np.where(np.isnan(surface), nearest, surface)
+        return surface
 
     rbf = Rbf(x, y, z, function="thin_plate", smooth=smooth)
     return rbf(grid_x, grid_y)
@@ -98,7 +102,14 @@ def _interpolate_quantile_surface(merged: pd.DataFrame, grid_x, grid_y, method: 
 def _mask_surface_to_boundary(grid_x, grid_y, surface, boundary_geom=None):
     if boundary_geom is None:
         return surface
-    mask = contains_xy(boundary_geom, grid_x, grid_y)
+    try:
+        mask = contains_xy(boundary_geom, grid_x.ravel(), grid_y.ravel()).reshape(grid_x.shape)
+    except Exception:
+        mask = contains_xy(boundary_geom, grid_x, grid_y)
+    if not np.any(mask):
+        # Defensive fallback: if mask creation fails silently (all-False),
+        # keep the interpolated field so the map does not degrade to points only.
+        return surface
     return np.where(mask, surface, np.nan)
 
 
