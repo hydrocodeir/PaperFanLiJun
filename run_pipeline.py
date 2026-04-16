@@ -43,11 +43,11 @@ from evaluation import (
 )
 from visualization import (
     plot_cluster_membership_map,
+    plot_paper_style_fig345_network_suite,
     plot_network_timeseries_with_trends,
     plot_paper_style_fig1,
     plot_paper_style_fig2,
     plot_paper_style_fig3_cluster_focus,
-    plot_paper_style_fig3_network,
     plot_paper_style_fig3_station_focus,
     plot_quantile_slope_profile,
     plot_station_quantile_map,
@@ -192,14 +192,14 @@ def main() -> None:
         suptitle="Figure 2 adaptation: network quantile slope profiles",
         group_filter={"network_id": config["methodology"].get("network_id", "station_network")},
     )
-    plot_paper_style_fig3_network(
-        station_trends,
-        station_metadata,
-        PROJECT_ROOT / "outputs/figures/paper_fig3_network.png",
-        suptitle="Figure 3 adaptation: q=0.90 station trends for the 6-station network",
+    plot_paper_style_fig345_network_suite(
+        station_trends=station_trends,
+        station_metadata=station_metadata,
+        output_dir=PROJECT_ROOT / "outputs/figures",
         boundary_path=PROJECT_ROOT / config["spatial_visualization"]["iran_boundary_geojson"],
-        interpolation_method=config["spatial_visualization"].get("interpolation_method", "thin_plate_spline"),
+        interpolation_method="thin_plate_spline",
         interpolation_smooth=float(config["spatial_visualization"].get("interpolation_smooth", 0.35)),
+        quantiles=((3, 0.90), (4, 0.50), (5, 0.10)),
     )
 
     for row in station_catalog.itertuples(index=False):
