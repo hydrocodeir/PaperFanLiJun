@@ -198,7 +198,7 @@ def main() -> None:
         PROJECT_ROOT / "outputs/figures/paper_fig3_network.png",
         suptitle="Figure 3 adaptation: q=0.90 station trends for the 6-station network",
         boundary_path=PROJECT_ROOT / config["spatial_visualization"]["iran_boundary_geojson"],
-        interpolation_method=config["spatial_visualization"].get("interpolation_method", "thin_plate_spline"),
+        interpolation_method="thin_plate_spline",
         interpolation_smooth=float(config["spatial_visualization"].get("interpolation_smooth", 0.35)),
     )
 
