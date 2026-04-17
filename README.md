@@ -69,3 +69,19 @@ python run_pipeline.py
 - For this six-station project, the network mean is an equal-weight station average.
 - The cluster extension is an added regionalization layer for the six-station network and is not part of the original paper.
 - Missing daily values are not blindly imputed into extreme-event counts. Annual counts are coverage-adjusted when annual completeness passes the configured threshold.
+
+
+## Clearing outputs
+```Get-ChildItem outputs/figures, outputs/models, outputs/tables -Force -Recurse |
+> Where-Object { $_.Name -ne '.keep' } |
+> Remove-Item -Force -Recurse
+```
+## References
+- Fan, L.-J., 2014: Quantile trends in temperature extremes in China. *Theoretical and Applied Climatology*, 115, 1–12, https://doi.org/10.1007/s00704-013-1018-4.
+- Rousseeuw, P. J. (1987). Silhouettes: A graphical aid to the interpretation and validation of cluster analysis. *Journal of Computational and Applied Mathematics*, 20, 53–65. https://doi.org/10.1016/0377-0427(87)90125-7
+- Ward, J. H. (1963). Hierarchical grouping to optimize an objective function. *Journal of the American Statistical Association*, 58(301), 236–244. https://doi.org/10.1080/01621459.1963.10500845
+- Scikit-learn documentation on hierarchical clustering: https://scikit-learn.org/stable/modules/clustering.html#hierarchical-clustering
+- Scikit-learn documentation on silhouette analysis: https://scikit-learn.org/stable/modules/clustering.html#silhouette-analysis
+- Statsmodels documentation on quantile regression: https://www.statsmodels.org/stable/regression.html#quantile-regression
+- Matplotlib documentation on plotting: https://matplotlib.org/stable/contents.html
+

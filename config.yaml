@@ -76,5 +76,5 @@ spatial_visualization:
   # - linear / cubic / nearest
   # - linear_rbf
   # - quintic
-  interpolation_method: thin_plate_spline
-  interpolation_smooth: 0.35
+  interpolation_method: linear_rbf
+  interpolation_smooth: 0.50
