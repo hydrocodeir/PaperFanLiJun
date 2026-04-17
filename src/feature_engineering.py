@@ -133,6 +133,7 @@ def apply_thresholds_and_compute_indices(
             merged[index_name] = np.where(value.notna() & threshold.notna(), value < threshold, np.nan)
 
     min_year_coverage = config["feature_engineering"]["min_year_coverage_for_index"]
+    has_precip = "precip" in merged.columns
     annual_records = []
 
     for (station_id, station_name, year), g in merged.groupby(["station_id", "station_name", "year"]):
@@ -149,6 +150,8 @@ def apply_thresholds_and_compute_indices(
             "tmax_annual": float(g["tmax"].mean()) if g["tmax"].notna().any() else np.nan,
             "tmin_annual": float(g["tmin"].mean()) if g["tmin"].notna().any() else np.nan,
         }
+        if has_precip:
+            row["precip_annual"] = float(g["precip"].sum(skipna=True)) if g["precip"].notna().any() else np.nan
 
         for index_name, spec in INDEX_SPECS.items():
             source_cov = row["tmax_coverage"] if spec["var"] == "tmax" else row["tmin_coverage"]
@@ -173,6 +176,8 @@ def apply_thresholds_and_compute_indices(
 def compute_network_mean_indices(annual: pd.DataFrame, config: Dict) -> pd.DataFrame:
     method = config["methodology"]["network_aggregation"]
     index_cols = list(INDEX_SPECS.keys()) + ["tmean_annual", "tmax_annual", "tmin_annual"]
+    if "precip_annual" in annual.columns:
+        index_cols.append("precip_annual")
 
     frames = []
     for year, g in annual.groupby("year"):

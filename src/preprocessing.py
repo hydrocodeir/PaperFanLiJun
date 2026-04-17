@@ -17,6 +17,7 @@ REQUIRED_CANONICAL_COLUMNS = [
     "tmin",
     "tmax",
 ]
+OPTIONAL_CANONICAL_COLUMNS = ["precip"]
 
 
 @dataclass
@@ -51,6 +52,9 @@ def load_configured_csv(config: Dict) -> pd.DataFrame:
         df["tmean"] = (pd.to_numeric(df["tmin"], errors="coerce") + pd.to_numeric(df["tmax"], errors="coerce")) / 2
 
     keep_cols = list(dict.fromkeys(REQUIRED_CANONICAL_COLUMNS + ["tmean"]))
+    for col in OPTIONAL_CANONICAL_COLUMNS:
+        if col in df.columns:
+            keep_cols.append(col)
     df = df[keep_cols].copy()
     return df
 
@@ -63,7 +67,9 @@ def _coerce_types(df: pd.DataFrame) -> pd.DataFrame:
     for c in ["year", "month", "day"]:
         out[c] = pd.to_numeric(out[c], errors="coerce").astype("Int64")
 
-    for c in ["tmin", "tmean", "tmax"]:
+    for c in ["tmin", "tmean", "tmax", "precip"]:
+        if c not in out.columns:
+            continue
         out[c] = pd.to_numeric(out[c], errors="coerce")
 
     out["date"] = pd.to_datetime(

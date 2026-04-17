@@ -63,7 +63,7 @@ clustering:
   method: hierarchical_ward
   min_k: 5
   max_k: 5
-  features: [elevation, mean_temp, mean_dtr]
+  features: [elevation, mean_temp, mean_dtr, mean_precip]
   selection_metric: silhouette
 
 spatial_visualization:
