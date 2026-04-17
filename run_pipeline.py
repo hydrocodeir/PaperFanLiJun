@@ -138,8 +138,16 @@ def main() -> None:
     cluster_tau_grid = [round(float(x), 2) for x in config["modeling"].get("cluster_quantiles_full_grid", config["modeling"]["quantiles_full_grid"])]
 
     n_jobs = int(config["modeling"].get("n_jobs", 1))
+    min_obs_for_trend = int(config["modeling"].get("min_observations_for_trend", 10))
 
-    network_trends, network_models = fit_trend_suite(network, value_columns=series_cols, group_columns=["network_id"], taus=network_tau_grid, n_jobs=n_jobs)
+    network_trends, network_models = fit_trend_suite(
+        network,
+        value_columns=series_cols,
+        group_columns=["network_id"],
+        taus=network_tau_grid,
+        n_jobs=n_jobs,
+        min_obs=min_obs_for_trend,
+    )
 
     station_catalog = annual[["station_id", "station_name"]].drop_duplicates().sort_values(["station_id", "station_name"])
     station_trends, station_models = fit_trend_suite(
@@ -148,6 +156,7 @@ def main() -> None:
         group_columns=["station_id", "station_name"],
         taus=station_tau_grid,
         n_jobs=n_jobs,
+        min_obs=min_obs_for_trend,
     )
 
     cluster_trends, cluster_models = fit_trend_suite(
@@ -156,6 +165,7 @@ def main() -> None:
         group_columns=["cluster", "cluster_id"],
         taus=cluster_tau_grid,
         n_jobs=n_jobs,
+        min_obs=min_obs_for_trend,
     )
 
     network_trends.to_csv(PROJECT_ROOT / "outputs/tables/network_trend_results.csv", index=False)
@@ -244,6 +254,7 @@ def main() -> None:
         "clustering_method": "hierarchical_ward",
         "optimal_k": int(best_k),
         "best_silhouette": float(best_score),
+        "min_observations_for_trend": int(min_obs_for_trend),
     }
     with open(PROJECT_ROOT / "outputs/models/run_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
