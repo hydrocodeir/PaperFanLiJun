@@ -61,8 +61,8 @@ modeling:
 
 clustering:
   method: hierarchical_ward
-  min_k: 4
-  max_k: 4
+  min_k: 5
+  max_k: 5
   features: [elevation, mean_temp, mean_dtr]
   selection_metric: silhouette
 
