@@ -96,11 +96,24 @@ def _interpolate_quantile_surface(merged: pd.DataFrame, grid_x, grid_y, method: 
     if len(merged) < 4:
         return np.full_like(grid_x, np.nan, dtype=float)
 
-    if method in {"thin_plate_spline", "rbf", "spline", "rbf_thin_plate"}:
-        rbf = Rbf(x, y, z, function="thin_plate", smooth=smooth)
-        return rbf(grid_x, grid_y)
-    if method in {"multiquadric", "rbf_multiquadric"}:
-        rbf = Rbf(x, y, z, function="multiquadric", smooth=smooth)
+    rbf_aliases = {
+        "thin_plate_spline": "thin_plate",
+        "rbf": "thin_plate",
+        "spline": "thin_plate",
+        "rbf_thin_plate": "thin_plate",
+        "multiquadric": "multiquadric",
+        "rbf_multiquadric": "multiquadric",
+        "inverse": "inverse",
+        "rbf_inverse": "inverse",
+        "gaussian": "gaussian",
+        "rbf_gaussian": "gaussian",
+        "linear_rbf": "linear",
+        "rbf_linear": "linear",
+        "quintic": "quintic",
+        "rbf_quintic": "quintic",
+    }
+    if method in rbf_aliases:
+        rbf = Rbf(x, y, z, function=rbf_aliases[method], smooth=smooth)
         return rbf(grid_x, grid_y)
     if method in {"linear", "cubic", "nearest"}:
         surface = griddata(np.column_stack([x, y]), z, (grid_x, grid_y), method=method)

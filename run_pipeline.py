@@ -207,7 +207,7 @@ def main() -> None:
         station_metadata=station_metadata,
         output_dir=PROJECT_ROOT / "outputs/figures",
         boundary_path=PROJECT_ROOT / config["spatial_visualization"]["iran_boundary_geojson"],
-        interpolation_method="thin_plate_spline",
+        interpolation_method=str(config["spatial_visualization"].get("interpolation_method", "thin_plate_spline")),
         interpolation_smooth=float(config["spatial_visualization"].get("interpolation_smooth", 0.35)),
         quantiles=((3, 0.90), (4, 0.50), (5, 0.10)),
     )

@@ -68,5 +68,13 @@ clustering:
 
 spatial_visualization:
   iran_boundary_geojson: data/raw/Iran.geojson
+  # options:
+  # - thin_plate_spline (default)
+  # - multiquadric
+  # - inverse
+  # - gaussian
+  # - linear / cubic / nearest
+  # - linear_rbf
+  # - quintic
   interpolation_method: thin_plate_spline
   interpolation_smooth: 0.35
