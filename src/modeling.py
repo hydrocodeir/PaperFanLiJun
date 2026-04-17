@@ -12,26 +12,26 @@ import statsmodels.api as sm
 from statsmodels.tools.sm_exceptions import IterationLimitWarning
 
 
-def _prep_series(year: pd.Series, values: pd.Series) -> pd.DataFrame:
+def _prep_series(year: pd.Series, values: pd.Series, min_obs: int = 10) -> pd.DataFrame:
     data = pd.DataFrame({"year": year, "value": values}).dropna().copy()
-    if len(data) < 10:
+    if len(data) < int(min_obs):
         return data
     data["year_centered"] = data["year"] - data["year"].mean()
     return data
 
 
-def _fit_ols(year: pd.Series, values: pd.Series):
-    data = _prep_series(year, values)
-    if len(data) < 10:
+def _fit_ols(year: pd.Series, values: pd.Series, min_obs: int = 10):
+    data = _prep_series(year, values, min_obs=min_obs)
+    if len(data) < int(min_obs):
         return None, None
     X = sm.add_constant(data["year_centered"])
     model = sm.OLS(data["value"], X).fit()
     return model, data["year"].mean()
 
 
-def _fit_quantile(year: pd.Series, values: pd.Series, tau: float):
-    data = _prep_series(year, values)
-    if len(data) < 10:
+def _fit_quantile(year: pd.Series, values: pd.Series, tau: float, min_obs: int = 10):
+    data = _prep_series(year, values, min_obs=min_obs)
+    if len(data) < int(min_obs):
         return None, None
     X = sm.add_constant(data["year_centered"])
     with warnings.catch_warnings():
@@ -41,15 +41,15 @@ def _fit_quantile(year: pd.Series, values: pd.Series, tau: float):
 
 
 def _fit_one_group_series(task):
-    group_key, group_dict, value_col, years, values, taus = task
+    group_key, group_dict, value_col, years, values, taus, min_obs = task
     series = pd.DataFrame({"year": years, value_col: values}).dropna()
-    if len(series) < 10:
+    if len(series) < int(min_obs):
         return [], {}
 
     results = []
     model_entries = {}
 
-    ols, year_mean = _fit_ols(series["year"], series[value_col])
+    ols, year_mean = _fit_ols(series["year"], series[value_col], min_obs=min_obs)
     if ols is not None:
         ci = ols.conf_int().loc["year_centered"].tolist()
         results.append(
@@ -75,7 +75,7 @@ def _fit_one_group_series(task):
         model_entries[f"{value_col}__ols_mean"] = {"model": ols, "year_mean": float(year_mean)}
 
     for tau in taus:
-        qr, year_mean = _fit_quantile(series["year"], series[value_col], tau=tau)
+        qr, year_mean = _fit_quantile(series["year"], series[value_col], tau=tau, min_obs=min_obs)
         if qr is None:
             continue
         ci = qr.conf_int().loc["year_centered"].tolist()
@@ -111,6 +111,7 @@ def fit_trend_suite(
     group_columns: List[str],
     taus: List[float],
     n_jobs: int = 1,
+    min_obs: int = 10,
 ) -> Tuple[pd.DataFrame, Dict]:
     tasks = []
     for group_key, g in df.groupby(group_columns):
@@ -119,9 +120,9 @@ def fit_trend_suite(
         group_dict = dict(zip(group_columns, group_key))
         for value_col in value_columns:
             series = g[["year", value_col]].dropna()
-            if len(series) < 10:
+            if len(series) < int(min_obs):
                 continue
-            tasks.append((group_key, group_dict, value_col, series["year"].tolist(), series[value_col].tolist(), taus))
+            tasks.append((group_key, group_dict, value_col, series["year"].tolist(), series[value_col].tolist(), taus, int(min_obs)))
 
     all_results = []
     model_store: Dict = {}

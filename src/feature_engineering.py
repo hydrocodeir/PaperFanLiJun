@@ -41,7 +41,23 @@ def compute_daily_percentile_thresholds(daily: pd.DataFrame, config: Dict) -> pd
         # Fallback for short sample datasets that do not cover the reference period.
         ref = daily.copy()
 
-    min_sample = config["feature_engineering"]["min_reference_samples_per_doy"]
+    min_sample = int(config["feature_engineering"]["min_reference_samples_per_doy"])
+    station_ref_stats = (
+        ref.groupby(["station_id", "station_name"])
+        .agg(
+            n_ref_years=("year", "nunique"),
+            n_tmax_days=("tmax", lambda s: int(s.notna().sum())),
+            n_tmin_days=("tmin", lambda s: int(s.notna().sum())),
+        )
+        .reset_index()
+    )
+    station_ref_stats["effective_min_sample"] = station_ref_stats["n_ref_years"].clip(lower=1).map(
+        lambda n: int(min(min_sample, int(n)))
+    )
+    station_ref_stats = station_ref_stats[
+        ["station_id", "station_name", "effective_min_sample"]
+    ]
+    ref = ref.merge(station_ref_stats, on=["station_id", "station_name"], how="left")
     frames = []
 
     for (station_id, station_name, doy), g in ref.groupby(["station_id", "station_name", "doy"]):
@@ -53,10 +69,11 @@ def compute_daily_percentile_thresholds(daily: pd.DataFrame, config: Dict) -> pd
             "n_tmin": int(g["tmin"].notna().sum()),
         }
 
-        row["tmax_p10"] = g["tmax"].quantile(0.10) if row["n_tmax"] >= min_sample else np.nan
-        row["tmax_p90"] = g["tmax"].quantile(0.90) if row["n_tmax"] >= min_sample else np.nan
-        row["tmin_p10"] = g["tmin"].quantile(0.10) if row["n_tmin"] >= min_sample else np.nan
-        row["tmin_p90"] = g["tmin"].quantile(0.90) if row["n_tmin"] >= min_sample else np.nan
+        effective_min_sample = int(g["effective_min_sample"].iloc[0]) if "effective_min_sample" in g.columns else min_sample
+        row["tmax_p10"] = g["tmax"].quantile(0.10) if row["n_tmax"] >= effective_min_sample else np.nan
+        row["tmax_p90"] = g["tmax"].quantile(0.90) if row["n_tmax"] >= effective_min_sample else np.nan
+        row["tmin_p10"] = g["tmin"].quantile(0.10) if row["n_tmin"] >= effective_min_sample else np.nan
+        row["tmin_p90"] = g["tmin"].quantile(0.90) if row["n_tmin"] >= effective_min_sample else np.nan
         frames.append(row)
 
     if not frames:
