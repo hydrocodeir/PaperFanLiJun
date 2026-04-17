@@ -15,6 +15,7 @@ from plot_theme import apply_publication_defaults, save_figure
 
 INDEX_COLUMNS = ["warm_days", "cool_days", "warm_nights", "cool_nights"]
 ANNUAL_CLIMATE_COLUMNS = ["tmean_annual", "tmax_annual", "tmin_annual"]
+CLUSTER_FEATURE_COLUMNS = ["elevation", "mean_temp", "mean_dtr", "mean_precip"]
 
 apply_publication_defaults()
 
@@ -51,6 +52,11 @@ def load_station_metadata(config: Dict) -> pd.DataFrame:
 
 def prepare_station_features(annual: pd.DataFrame, station_metadata: pd.DataFrame) -> pd.DataFrame:
     annual = annual.copy()
+    if "precip_annual" not in annual.columns:
+        raise ValueError(
+            "Cannot cluster stations with precipitation because column 'precip_annual' is missing. "
+            "Include daily precipitation in the input dataset."
+        )
     annual["station_id"] = annual["station_id"].astype(str)
     annual["mean_dtr_annual"] = annual["tmax_annual"] - annual["tmin_annual"]
 
@@ -59,12 +65,13 @@ def prepare_station_features(annual: pd.DataFrame, station_metadata: pd.DataFram
         .agg(
             mean_temp=("tmean_annual", "mean"),
             mean_dtr=("mean_dtr_annual", "mean"),
+            mean_precip=("precip_annual", "mean"),
             years_available=("year", "nunique"),
         )
     )
 
     merged = station_metadata.merge(features, on="station_id", how="left", validate="one_to_one")
-    merged["feature_missing"] = merged[["elevation", "mean_temp", "mean_dtr"]].isna().any(axis=1)
+    merged["feature_missing"] = merged[CLUSTER_FEATURE_COLUMNS].isna().any(axis=1)
     if merged["feature_missing"].any():
         missing_ids = ", ".join(merged.loc[merged["feature_missing"], "station_id"].astype(str).tolist())
         raise ValueError(f"Cannot cluster stations because required features are missing for: {missing_ids}")
@@ -77,7 +84,7 @@ def optimize_ward_clusters(
     min_k: int = 2,
     max_k: int = 5,
 ) -> Tuple[int, float, pd.DataFrame, np.ndarray, StandardScaler]:
-    X = features[["elevation", "mean_temp", "mean_dtr"]].to_numpy(dtype=float)
+    X = features[CLUSTER_FEATURE_COLUMNS].to_numpy(dtype=float)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
@@ -107,7 +114,7 @@ def fit_ward_clustering(
     features: pd.DataFrame,
     n_clusters: int,
 ) -> Tuple[pd.DataFrame, np.ndarray, StandardScaler]:
-    X = features[["elevation", "mean_temp", "mean_dtr"]].to_numpy(dtype=float)
+    X = features[CLUSTER_FEATURE_COLUMNS].to_numpy(dtype=float)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     model = AgglomerativeClustering(n_clusters=n_clusters, linkage="ward")
@@ -164,6 +171,7 @@ def summarize_clusters(station_clusters: pd.DataFrame) -> pd.DataFrame:
             mean_elevation=("elevation", "mean"),
             mean_temp=("mean_temp", "mean"),
             mean_dtr=("mean_dtr", "mean"),
+            mean_precip=("mean_precip", "mean"),
         )
     )
     member_map = (
@@ -175,7 +183,7 @@ def summarize_clusters(station_clusters: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_ward_dendrogram(features: pd.DataFrame, output_path: Path) -> None:
-    X = features[["elevation", "mean_temp", "mean_dtr"]].to_numpy(dtype=float)
+    X = features[CLUSTER_FEATURE_COLUMNS].to_numpy(dtype=float)
     X_scaled = StandardScaler().fit_transform(X)
     linkage_matrix = linkage(X_scaled, method="ward")
 
@@ -228,8 +236,8 @@ def plot_cluster_feature_space(station_clusters: pd.DataFrame, output_path: Path
 
     ax = axes[1]
     sc2 = ax.scatter(
+        station_clusters["mean_precip"],
         station_clusters["elevation"],
-        station_clusters["mean_temp"],
         c=station_clusters["cluster"],
         s=110,
         cmap="viridis",
@@ -237,10 +245,10 @@ def plot_cluster_feature_space(station_clusters: pd.DataFrame, output_path: Path
         linewidths=0.35,
     )
     for _, row in station_clusters.iterrows():
-        ax.text(row["elevation"] + 5, row["mean_temp"] + 0.03, str(row["station_name"]), fontsize=8)
-    ax.set_xlabel("Elevation (m)")
-    ax.set_ylabel("Mean annual temperature (C)")
-    ax.set_title("Elevation-temperature space")
+        ax.text(row["mean_precip"] + 1.0, row["elevation"] + 5, str(row["station_name"]), fontsize=8)
+    ax.set_xlabel("Mean annual precipitation")
+    ax.set_ylabel("Elevation (m)")
+    ax.set_title("Precipitation-elevation space")
 
     cbar = fig.colorbar(sc2, ax=axes.ravel().tolist(), shrink=0.85, label="Cluster")
     cbar.ax.tick_params(labelsize=9)
