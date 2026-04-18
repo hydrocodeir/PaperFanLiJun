@@ -640,3 +640,237 @@ def plot_cluster_membership_map(station_clusters: pd.DataFrame, output_path: Pat
     ax.set_title("Station clusters from Ward hierarchical clustering")
     ax.grid(True, alpha=0.3)
     save_figure(fig, output_path)
+
+
+def plot_quantile_significance_heatmap(
+    trends_df: pd.DataFrame,
+    output_path: Path,
+    group_filter: Optional[Dict[str, object]] = None,
+    quantile_step: float = 0.05,
+) -> None:
+    required = {"series", "model_type", "quantile", "slope_per_decade", "significant_95"}
+    if trends_df is None or trends_df.empty or not required.issubset(trends_df.columns):
+        return
+
+    subset = _apply_group_filter(trends_df, group_filter)
+    subset = subset.loc[subset["model_type"] == "quantile"].copy()
+    if subset.empty:
+        return
+
+    q_grid = np.arange(0.05, 0.96, quantile_step).round(2)
+    subset["q_round"] = subset["quantile"].round(2)
+    subset = subset.loc[subset["q_round"].isin(q_grid)].copy()
+    if subset.empty:
+        return
+
+    heat = (
+        subset.pivot_table(index="series", columns="q_round", values="slope_per_decade", aggfunc="mean")
+        .reindex(index=SERIES_ORDER)
+        .reindex(columns=q_grid)
+    )
+    sig = (
+        subset.pivot_table(index="series", columns="q_round", values="significant_95", aggfunc="mean")
+        .reindex(index=SERIES_ORDER)
+        .reindex(columns=q_grid)
+    )
+    if heat.isna().all().all():
+        return
+
+    fig, ax = plt.subplots(figsize=(12, 4.8))
+    vmax = float(np.nanmax(np.abs(heat.to_numpy(dtype=float))))
+    vmax = max(vmax, 1.0)
+    im = ax.imshow(heat.to_numpy(dtype=float), aspect="auto", cmap="coolwarm", vmin=-vmax, vmax=vmax)
+
+    for i in range(len(heat.index)):
+        for j in range(len(heat.columns)):
+            if pd.notna(sig.iloc[i, j]) and float(sig.iloc[i, j]) >= 0.5:
+                ax.text(j, i, "•", ha="center", va="center", color="black", fontsize=9)
+
+    ax.set_xticks(np.arange(len(heat.columns)))
+    ax.set_xticklabels([f"{q:.2f}" for q in heat.columns], rotation=45, ha="right")
+    ax.set_yticks(np.arange(len(heat.index)))
+    ax.set_yticklabels([_series_label(s) for s in heat.index])
+    ax.set_xlabel("Quantile")
+    ax.set_ylabel("Index")
+    ax.set_title("Quantile-trend heatmap (dot = 95% significant)")
+    cbar = fig.colorbar(im, ax=ax, pad=0.015)
+    cbar.set_label("Trend slope (days/decade)")
+    save_figure(fig, output_path)
+
+
+def plot_quantile_tail_contrast(
+    trends_df: pd.DataFrame,
+    output_path: Path,
+    group_filter: Optional[Dict[str, object]] = None,
+    low_quantile: float = 0.10,
+    high_quantile: float = 0.90,
+) -> None:
+    required = {"series", "model_type", "quantile", "slope_per_decade"}
+    if trends_df is None or trends_df.empty or not required.issubset(trends_df.columns):
+        return
+
+    subset = _apply_group_filter(trends_df, group_filter)
+    subset = subset.loc[subset["model_type"] == "quantile"].copy()
+    if subset.empty:
+        return
+
+    q_low = subset.loc[subset["quantile"].round(2) == round(float(low_quantile), 2), ["series", "slope_per_decade"]].copy()
+    q_high = subset.loc[subset["quantile"].round(2) == round(float(high_quantile), 2), ["series", "slope_per_decade"]].copy()
+    q_low = q_low.rename(columns={"slope_per_decade": "slope_low"})
+    q_high = q_high.rename(columns={"slope_per_decade": "slope_high"})
+    cmp_df = q_low.merge(q_high, on="series", how="inner")
+    cmp_df = cmp_df.set_index("series").reindex(SERIES_ORDER).dropna(how="all")
+    if cmp_df.empty:
+        return
+
+    y = np.arange(len(cmp_df))
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    for i, (_, row) in enumerate(cmp_df.iterrows()):
+        ax.plot([row["slope_low"], row["slope_high"]], [i, i], color="#4d4d4d", linewidth=1.5, zorder=1)
+    ax.scatter(cmp_df["slope_low"], y, s=55, marker="o", label=f"q={low_quantile:.2f}", zorder=2)
+    ax.scatter(cmp_df["slope_high"], y, s=55, marker="s", label=f"q={high_quantile:.2f}", zorder=2)
+    ax.axvline(0.0, color="black", linewidth=1.0, linestyle="--")
+    ax.set_yticks(y)
+    ax.set_yticklabels([_series_label(s) for s in cmp_df.index])
+    ax.set_xlabel("Trend slope (days/decade)")
+    ax.set_title("Tail-contrast of trend slopes")
+    ax.grid(True, axis="x", alpha=0.25)
+    ax.legend(frameon=False)
+    save_figure(fig, output_path)
+
+
+def plot_station_trend_forest(
+    station_trends: pd.DataFrame,
+    output_path: Path,
+    target_quantile: float = 0.90,
+) -> None:
+    required = {"station_id", "station_name", "series", "model_type", "quantile", "slope_per_decade", "ci_low_per_decade", "ci_high_per_decade"}
+    if station_trends is None or station_trends.empty or not required.issubset(station_trends.columns):
+        return
+
+    q = station_trends[
+        (station_trends["model_type"] == "quantile")
+        & (station_trends["quantile"].round(2) == round(float(target_quantile), 2))
+    ].copy()
+    if q.empty:
+        return
+    q["station_label"] = q["station_name"].astype(str) + " (" + q["station_id"].astype(str) + ")"
+    order = (
+        q.groupby("station_label", as_index=False)["slope_per_decade"]
+        .apply(lambda s: s.abs().mean())
+        .rename(columns={"slope_per_decade": "mean_abs"})
+        .sort_values("mean_abs", ascending=False)["station_label"]
+        .tolist()
+    )
+
+    fig, axes = plt.subplots(2, 2, figsize=(12.5, 9), sharex=True)
+    for ax, series in zip(axes.flat, SERIES_ORDER):
+        s = q.loc[q["series"] == series].copy()
+        if s.empty:
+            ax.set_axis_off()
+            continue
+        s["station_label"] = pd.Categorical(s["station_label"], categories=order, ordered=True)
+        s = s.sort_values("station_label", ascending=True)
+        ypos = np.arange(len(s))
+        ax.hlines(y=ypos, xmin=s["ci_low_per_decade"], xmax=s["ci_high_per_decade"], color="#4d4d4d", linewidth=1.4)
+        ax.scatter(s["slope_per_decade"], ypos, s=28, zorder=3)
+        ax.axvline(0.0, linestyle="--", linewidth=1.0, color="black")
+        ax.set_yticks(ypos)
+        ax.set_yticklabels(s["station_label"], fontsize=8)
+        ax.set_title(SERIES_PANEL_LABELS.get(series, _series_label(series)))
+        ax.grid(True, axis="x", alpha=0.25)
+        ax.set_xlabel("Trend (days/decade)")
+    fig.suptitle(f"Forest plot of station trends at q={target_quantile:.2f}", fontsize=14, y=0.99)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    save_figure(fig, output_path)
+
+
+def plot_trend_vs_breakcount_scatter(
+    station_discussion_df: pd.DataFrame,
+    output_path: Path,
+) -> None:
+    required = {"mean_abs_slope_per_decade", "n_breaks_total", "station_name", "station_id"}
+    if station_discussion_df is None or station_discussion_df.empty or not required.issubset(station_discussion_df.columns):
+        return
+
+    d = station_discussion_df.copy()
+    fig, ax = plt.subplots(figsize=(8.8, 6))
+    sc = ax.scatter(
+        d["n_breaks_total"],
+        d["mean_abs_slope_per_decade"],
+        c=d.get("share_significant_series", pd.Series(0.0, index=d.index)),
+        s=95,
+        cmap="viridis",
+        edgecolors="black",
+        linewidths=0.4,
+    )
+    for _, row in d.iterrows():
+        ax.text(
+            row["n_breaks_total"] + 0.03,
+            row["mean_abs_slope_per_decade"] + 0.01,
+            f"{row['station_name']} ({row['station_id']})",
+            fontsize=8,
+        )
+    ax.set_xlabel("BreakCount (n_breaks)")
+    ax.set_ylabel("Trend intensity (mean |slope|, days/decade)")
+    ax.set_title("Trend vs BreakCount scatter")
+    ax.grid(True, alpha=0.25)
+    cbar = fig.colorbar(sc, ax=ax, pad=0.01)
+    cbar.set_label("Share of significant series")
+    save_figure(fig, output_path)
+
+
+def plot_signal_uncertainty_panel(
+    station_trends: pd.DataFrame,
+    output_path: Path,
+    target_quantile: float = 0.90,
+) -> None:
+    required = {"station_id", "station_name", "series", "model_type", "quantile", "slope_per_decade", "ci_low_per_decade", "ci_high_per_decade"}
+    if station_trends is None or station_trends.empty or not required.issubset(station_trends.columns):
+        return
+
+    q = station_trends[
+        (station_trends["model_type"] == "quantile")
+        & (station_trends["quantile"].round(2) == round(float(target_quantile), 2))
+    ].copy()
+    if q.empty:
+        return
+
+    q["signal_abs_slope"] = q["slope_per_decade"].abs()
+    q["ci_width"] = (q["ci_high_per_decade"] - q["ci_low_per_decade"]).abs()
+    q["boot_std_proxy"] = q["ci_width"] / 3.92  # ~95% CI width under normal approximation
+
+    fig, ax = plt.subplots(figsize=(9.2, 6.6))
+    markers = {"warm_days": "o", "cool_days": "s", "warm_nights": "^", "cool_nights": "D"}
+    for series in SERIES_ORDER:
+        s = q.loc[q["series"] == series]
+        if s.empty:
+            continue
+        sc = ax.scatter(
+            s["signal_abs_slope"],
+            s["boot_std_proxy"],
+            c=s["ci_width"],
+            cmap="plasma",
+            s=75,
+            marker=markers.get(series, "o"),
+            edgecolors="black",
+            linewidths=0.35,
+            alpha=0.9,
+            label=_series_label(series),
+        )
+    for _, row in q.iterrows():
+        ax.text(
+            row["signal_abs_slope"] + 0.005,
+            row["boot_std_proxy"] + 0.005,
+            str(row["station_id"]),
+            fontsize=7,
+            alpha=0.75,
+        )
+    ax.set_xlabel("Signal |slope| (days/decade)")
+    ax.set_ylabel("Uncertainty (boot_std proxy)")
+    ax.set_title("Taylor-like Signal-vs-Uncertainty panel")
+    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=False, ncol=2)
+    cbar = fig.colorbar(sc, ax=ax, pad=0.01)
+    cbar.set_label("CI width (days/decade)")
+    save_figure(fig, output_path)

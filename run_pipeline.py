@@ -36,7 +36,13 @@ from clustering import (
     summarize_clusters,
 )
 from modeling import fit_trend_suite, save_model_store
+from homogenization import apply_homogenization, summarize_homogenization_breaks
 from evaluation import (
+    build_quantile_spread_summary,
+    build_journal_ready_results_table,
+    build_journal_ready_wide_table,
+    build_station_discussion_table,
+    build_station_extreme_trend_ranking,
     build_station_significance_summary,
     compare_selected_quantiles,
     create_method_summary,
@@ -49,8 +55,13 @@ from visualization import (
     plot_paper_style_fig2,
     plot_paper_style_fig3_cluster_focus,
     plot_paper_style_fig3_station_focus,
+    plot_quantile_significance_heatmap,
+    plot_quantile_tail_contrast,
     plot_quantile_slope_profile,
+    plot_signal_uncertainty_panel,
     plot_station_quantile_map,
+    plot_station_trend_forest,
+    plot_trend_vs_breakcount_scatter,
 )
 
 
@@ -96,10 +107,18 @@ def main() -> None:
     if prep.issue_log is not None and not prep.issue_log.empty:
         prep.issue_log.to_csv(PROJECT_ROOT / "outputs/tables/preprocessing_issue_log.csv", index=False)
 
-    thresholds = compute_daily_percentile_thresholds(prep.daily, config)
+    homog = apply_homogenization(prep.daily, config)
+    daily_for_analysis = homog.daily.copy()
+    daily_for_analysis.to_csv(PROJECT_ROOT / "data/processed/clean_daily_data_homogenized.csv", index=False)
+    homog.breaks.to_csv(PROJECT_ROOT / "outputs/tables/homogenization_breaks.csv", index=False)
+    homog.adjustments.to_csv(PROJECT_ROOT / "outputs/tables/homogenization_adjustments.csv", index=False)
+    station_break_summary = summarize_homogenization_breaks(homog.breaks)
+    station_break_summary.to_csv(PROJECT_ROOT / "outputs/tables/station_homogenization_summary.csv", index=False)
+
+    thresholds = compute_daily_percentile_thresholds(daily_for_analysis, config)
     thresholds.to_csv(PROJECT_ROOT / "data/processed/daily_thresholds_1961_1990.csv", index=False)
 
-    annual = apply_thresholds_and_compute_indices(prep.daily, thresholds, config)
+    annual = apply_thresholds_and_compute_indices(daily_for_analysis, thresholds, config)
     annual.to_csv(PROJECT_ROOT / "data/processed/annual_extreme_indices_station.csv", index=False)
 
     network = compute_network_mean_indices(annual, config)
@@ -182,6 +201,30 @@ def main() -> None:
 
     build_station_significance_summary(station_trends, target_quantile=0.90).to_csv(PROJECT_ROOT / "outputs/tables/station_q90_significance_summary.csv", index=False)
     build_station_significance_summary(cluster_trends, target_quantile=0.90).to_csv(PROJECT_ROOT / "outputs/tables/cluster_q90_significance_summary.csv", index=False)
+    build_quantile_spread_summary(network_trends, quantiles=(0.10, 0.50, 0.90)).to_csv(
+        PROJECT_ROOT / "outputs/tables/network_quantile_spread_summary.csv",
+        index=False,
+    )
+    build_station_extreme_trend_ranking(station_trends, target_quantile=0.90).to_csv(
+        PROJECT_ROOT / "outputs/tables/station_q90_trend_ranking.csv",
+        index=False,
+    )
+    station_discussion = build_station_discussion_table(
+        station_trends=station_trends,
+        station_break_summary=station_break_summary,
+        target_quantile=0.90,
+    )
+    station_discussion.to_csv(PROJECT_ROOT / "outputs/tables/station_q90_discussion_table.csv", index=False)
+    journal_ready_long = build_journal_ready_results_table(
+        network_trends=network_trends,
+        cluster_trends=cluster_trends,
+        selected_quantiles=selected_quantiles,
+    )
+    journal_ready_long.to_csv(PROJECT_ROOT / "outputs/tables/journal_ready_results_table.csv", index=False)
+    build_journal_ready_wide_table(journal_ready_long).to_csv(
+        PROJECT_ROOT / "outputs/tables/journal_ready_results_wide_table.csv",
+        index=False,
+    )
     create_method_summary().to_csv(PROJECT_ROOT / "outputs/tables/methodology_summary.csv", index=False)
 
     for series in series_cols:
@@ -201,6 +244,33 @@ def main() -> None:
         PROJECT_ROOT / "outputs/figures/paper_fig2_network.png",
         suptitle="Figure 2 adaptation: network quantile slope profiles",
         group_filter={"network_id": config["methodology"].get("network_id", "station_network")},
+    )
+    plot_quantile_significance_heatmap(
+        network_trends,
+        PROJECT_ROOT / "outputs/figures/network_quantile_significance_heatmap.png",
+        group_filter={"network_id": config["methodology"].get("network_id", "station_network")},
+        quantile_step=0.05,
+    )
+    plot_quantile_tail_contrast(
+        network_trends,
+        PROJECT_ROOT / "outputs/figures/network_quantile_tail_contrast.png",
+        group_filter={"network_id": config["methodology"].get("network_id", "station_network")},
+        low_quantile=0.10,
+        high_quantile=0.90,
+    )
+    plot_station_trend_forest(
+        station_trends=station_trends,
+        output_path=PROJECT_ROOT / "outputs/figures/station_q90_forest_plot.png",
+        target_quantile=0.90,
+    )
+    plot_trend_vs_breakcount_scatter(
+        station_discussion_df=station_discussion,
+        output_path=PROJECT_ROOT / "outputs/figures/trend_vs_breakcount_scatter.png",
+    )
+    plot_signal_uncertainty_panel(
+        station_trends=station_trends,
+        output_path=PROJECT_ROOT / "outputs/figures/taylor_signal_uncertainty_panel_q90.png",
+        target_quantile=0.90,
     )
     plot_paper_style_fig345_network_suite(
         station_trends=station_trends,
@@ -242,6 +312,7 @@ def main() -> None:
         "input_csv": config["data"]["input_csv"],
         "station_info_csv": config["data"]["station_info_csv"],
         "n_clean_daily_rows": int(len(prep.daily)),
+        "n_clean_daily_rows_homogenized": int(len(daily_for_analysis)),
         "n_station_year_rows": int(len(annual)),
         "n_network_year_rows": int(len(network)),
         "n_cluster_year_rows": int(len(cluster_annual)),
@@ -255,6 +326,7 @@ def main() -> None:
         "optimal_k": int(best_k),
         "best_silhouette": float(best_score),
         "min_observations_for_trend": int(min_obs_for_trend),
+        "homogenization_method": str(homog.method),
     }
     with open(PROJECT_ROOT / "outputs/models/run_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)

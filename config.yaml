@@ -15,6 +15,15 @@ preprocessing:
       tmean: [-60, 60]
       tmax: [-60, 65]
 
+homogenization:
+  method: none  # options: none | mean_shift_proxy | external_rhtests_csv
+  variables: [tmin, tmax, tmean]
+  z_threshold: 2.5
+  min_year_gap: 5
+  # For method=external_rhtests_csv provide a CSV with columns:
+  # station_id, break_date (YYYY-MM-DD), variable, [shift_celsius], [detected_by]
+  external_breaks_csv: outputs/tables/rhtests_breaks.csv
+
 methodology:
   reference_period: [1961, 1990]
   network_aggregation: simple_mean
