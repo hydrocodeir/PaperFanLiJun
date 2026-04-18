@@ -45,6 +45,12 @@ Optional:
    - the full network
    - each station
    - each cluster
+9. Produces Q1-ready supplementary diagnostics:
+   - quantile-trend significance heatmap (network level)
+   - tail-contrast plot between lower and upper quantiles
+   - quantile spread summary table and station ranking table
+   - station forest plot and signal-vs-uncertainty panel
+   - trend-vs-breakcount scatter for homogenization complexity analysis
 
 ## Run
 ```bash
@@ -59,10 +65,38 @@ python run_pipeline.py
 - `outputs/tables/station_clusters.csv`
 - `outputs/tables/cluster_metrics.csv`
 - `outputs/tables/cluster_trend_results.csv`
+- `outputs/tables/network_quantile_spread_summary.csv`
+- `outputs/tables/station_q90_trend_ranking.csv`
+- `outputs/tables/station_q90_discussion_table.csv`
+- `outputs/tables/homogenization_breaks.csv`
+- `outputs/tables/homogenization_adjustments.csv`
+- `outputs/tables/station_homogenization_summary.csv`
 - `outputs/figures/ward_dendrogram.png`
 - `outputs/figures/ward_silhouette.png`
+- `outputs/figures/network_quantile_significance_heatmap.png`
+- `outputs/figures/network_quantile_tail_contrast.png`
+- `outputs/figures/station_q90_forest_plot.png`
+- `outputs/figures/trend_vs_breakcount_scatter.png`
+- `outputs/figures/taylor_signal_uncertainty_panel_q90.png`
 - `outputs/figures/clusters/`
 - `outputs/models/`
+
+## Homogenization workflow (RHtests-compatible)
+1. Set `homogenization.method` in `config.yaml`:
+   - `none` (default): skip homogenization
+   - `mean_shift_proxy`: internal automated mean-shift proxy detector
+   - `external_rhtests_csv`: import breakpoints from RHtests-like output
+2. For RHtests integration, prepare a CSV at `homogenization.external_breaks_csv` with columns:
+   - `station_id`
+   - `break_date` (YYYY-MM-DD)
+   - `variable` (`tmin`, `tmax`, or `tmean`)
+   - optional `shift_celsius` (if omitted, shift is estimated from local windows)
+   - optional `detected_by` (e.g., `RHtestsV4`)
+3. Run pipeline and inspect:
+   - break metadata: `outputs/tables/homogenization_breaks.csv`
+   - applied corrections: `outputs/tables/homogenization_adjustments.csv`
+   - station-level complexity: `outputs/tables/station_homogenization_summary.csv`
+   - relation to trends: `outputs/figures/trend_vs_breakcount_scatter.png`
 
 ## Notes on adaptation
 - The original paper used 549 stations and 2x2 degree gridding before computing a China-wide mean.
@@ -84,4 +118,3 @@ python run_pipeline.py
 - Scikit-learn documentation on silhouette analysis: https://scikit-learn.org/stable/modules/clustering.html#silhouette-analysis
 - Statsmodels documentation on quantile regression: https://www.statsmodels.org/stable/regression.html#quantile-regression
 - Matplotlib documentation on plotting: https://matplotlib.org/stable/contents.html
-
