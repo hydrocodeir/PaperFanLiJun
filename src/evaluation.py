@@ -207,3 +207,114 @@ def build_station_discussion_table(
         discussion["n_breaks_total"] = 0
     discussion["n_breaks_total"] = discussion["n_breaks_total"].fillna(0).astype(int)
     return discussion.sort_values("rank_by_abs_slope").reset_index(drop=True)
+
+
+def build_journal_ready_results_table(
+    network_trends: pd.DataFrame,
+    cluster_trends: pd.DataFrame,
+    selected_quantiles: List[float],
+) -> pd.DataFrame:
+    core_cols = [
+        "series",
+        "model_type",
+        "quantile",
+        "slope_per_decade",
+        "ci_low_per_decade",
+        "ci_high_per_decade",
+        "p_value",
+        "significant_95",
+    ]
+    if network_trends is None or network_trends.empty:
+        return pd.DataFrame()
+    if not set(core_cols).issubset(network_trends.columns):
+        return pd.DataFrame()
+
+    chosen_q = [round(float(q), 2) for q in selected_quantiles]
+    keep_mask = (
+        (network_trends["model_type"] == "ols_mean")
+        | (
+            (network_trends["model_type"] == "quantile")
+            & (network_trends["quantile"].round(2).isin(chosen_q))
+        )
+    )
+    network = network_trends.loc[keep_mask, core_cols + [c for c in ["network_id"] if c in network_trends.columns]].copy()
+    network["analysis_level"] = "network"
+    network["group_id"] = network.get("network_id", "network")
+    network["quantile_label"] = np.where(
+        network["model_type"] == "ols_mean",
+        "mean",
+        network["quantile"].map(lambda x: f"q{float(x):.2f}"),
+    )
+
+    cluster_table = pd.DataFrame(columns=network.columns.tolist() + ["cluster_range_slope", "cluster_sd_slope"])
+    if cluster_trends is not None and not cluster_trends.empty and set(core_cols).issubset(cluster_trends.columns):
+        c_keep = (
+            (cluster_trends["model_type"] == "ols_mean")
+            | (
+                (cluster_trends["model_type"] == "quantile")
+                & (cluster_trends["quantile"].round(2).isin(chosen_q))
+            )
+        )
+        cluster = cluster_trends.loc[c_keep, core_cols + [c for c in ["cluster", "cluster_id"] if c in cluster_trends.columns]].copy()
+        cluster["analysis_level"] = "cluster"
+        cluster["group_id"] = cluster.get("cluster_id", cluster.get("cluster", "cluster"))
+        cluster["quantile_label"] = np.where(
+            cluster["model_type"] == "ols_mean",
+            "mean",
+            cluster["quantile"].map(lambda x: f"q{float(x):.2f}"),
+        )
+        comp = cluster.groupby(["series", "quantile_label"], as_index=False).agg(
+            cluster_range_slope=("slope_per_decade", lambda s: float(s.max() - s.min())),
+            cluster_sd_slope=("slope_per_decade", "std"),
+        )
+        cluster_table = cluster.merge(comp, on=["series", "quantile_label"], how="left")
+    else:
+        cluster_table = pd.DataFrame(columns=network.columns.tolist() + ["cluster_range_slope", "cluster_sd_slope"])
+
+    network["cluster_range_slope"] = np.nan
+    network["cluster_sd_slope"] = np.nan
+    out = pd.concat([network, cluster_table], ignore_index=True, sort=False)
+    out["effect_size"] = out["slope_per_decade"]
+    out["ci_95"] = out["ci_low_per_decade"].map(lambda v: f"{v:.2f}") + " to " + out["ci_high_per_decade"].map(lambda v: f"{v:.2f}")
+    out = out[
+        [
+            "analysis_level",
+            "group_id",
+            "series",
+            "quantile_label",
+            "effect_size",
+            "p_value",
+            "ci_95",
+            "significant_95",
+            "cluster_range_slope",
+            "cluster_sd_slope",
+        ]
+    ].sort_values(["analysis_level", "series", "quantile_label", "group_id"]).reset_index(drop=True)
+    return out
+
+
+def build_journal_ready_wide_table(journal_ready_long: pd.DataFrame) -> pd.DataFrame:
+    required = {"analysis_level", "group_id", "series", "quantile_label", "effect_size", "p_value", "ci_95", "significant_95"}
+    if journal_ready_long is None or journal_ready_long.empty or not required.issubset(journal_ready_long.columns):
+        return pd.DataFrame()
+
+    df = journal_ready_long.copy()
+    value_cols = ["effect_size", "p_value", "ci_95", "significant_95", "cluster_range_slope", "cluster_sd_slope"]
+    value_cols = [c for c in value_cols if c in df.columns]
+    wide = df.pivot_table(
+        index=["analysis_level", "group_id", "series"],
+        columns="quantile_label",
+        values=value_cols,
+        aggfunc="first",
+    )
+    wide.columns = [f"{metric}__{q}" for metric, q in wide.columns]
+    wide = wide.reset_index()
+
+    preferred_q_order = ["mean", "q0.10", "q0.50", "q0.90"]
+    leading = ["analysis_level", "group_id", "series"]
+    ordered = leading + [
+        c for q in preferred_q_order for c in wide.columns
+        if c.endswith(f"__{q}")
+    ] + [c for c in wide.columns if c not in leading and all(not c.endswith(f"__{q}") for q in preferred_q_order)]
+    ordered = [c for c in ordered if c in wide.columns]
+    return wide[ordered].sort_values(["analysis_level", "series", "group_id"]).reset_index(drop=True)

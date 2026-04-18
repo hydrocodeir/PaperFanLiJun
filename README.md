@@ -51,6 +51,8 @@ Optional:
    - quantile spread summary table and station ranking table
    - station forest plot and signal-vs-uncertainty panel
    - trend-vs-breakcount scatter for homogenization complexity analysis
+   - journal-ready consolidated results table (effect size + p-value + CI + cluster-wise spread)
+   - journal-ready wide table (mean/q10/q50/q90 columns for direct manuscript paste)
 
 ## Run
 ```bash
@@ -68,6 +70,8 @@ python run_pipeline.py
 - `outputs/tables/network_quantile_spread_summary.csv`
 - `outputs/tables/station_q90_trend_ranking.csv`
 - `outputs/tables/station_q90_discussion_table.csv`
+- `outputs/tables/journal_ready_results_table.csv`
+- `outputs/tables/journal_ready_results_wide_table.csv`
 - `outputs/tables/homogenization_breaks.csv`
 - `outputs/tables/homogenization_adjustments.csv`
 - `outputs/tables/station_homogenization_summary.csv`

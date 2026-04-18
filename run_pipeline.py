@@ -39,6 +39,8 @@ from modeling import fit_trend_suite, save_model_store
 from homogenization import apply_homogenization, summarize_homogenization_breaks
 from evaluation import (
     build_quantile_spread_summary,
+    build_journal_ready_results_table,
+    build_journal_ready_wide_table,
     build_station_discussion_table,
     build_station_extreme_trend_ranking,
     build_station_significance_summary,
@@ -213,6 +215,16 @@ def main() -> None:
         target_quantile=0.90,
     )
     station_discussion.to_csv(PROJECT_ROOT / "outputs/tables/station_q90_discussion_table.csv", index=False)
+    journal_ready_long = build_journal_ready_results_table(
+        network_trends=network_trends,
+        cluster_trends=cluster_trends,
+        selected_quantiles=selected_quantiles,
+    )
+    journal_ready_long.to_csv(PROJECT_ROOT / "outputs/tables/journal_ready_results_table.csv", index=False)
+    build_journal_ready_wide_table(journal_ready_long).to_csv(
+        PROJECT_ROOT / "outputs/tables/journal_ready_results_wide_table.csv",
+        index=False,
+    )
     create_method_summary().to_csv(PROJECT_ROOT / "outputs/tables/methodology_summary.csv", index=False)
 
     for series in series_cols:
